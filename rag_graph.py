@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
-llm        = ChatGroq(model="qwen/qwen3.6-27b", temperature=0)
+llm        = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 physics_db = Chroma(
