@@ -36,7 +36,7 @@ def health_check():
 
 
 @app.post("/upload-pdf", response_model=list[UploadResponse])
-async def upload_pdf(
+def upload_pdf(
     physics_file: UploadFile = File(None, description="Physics PDF file"),
     chemistry_file: UploadFile = File(None, description="Chemistry PDF file"),
     biology_file: UploadFile = File(None, description="Biology PDF file"),
