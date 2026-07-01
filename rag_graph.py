@@ -10,11 +10,10 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain.agents import create_agent
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
-from langchain.agents.structured_output import ToolStrategy
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
-llm        = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+llm        = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 physics_db = Chroma(
@@ -64,7 +63,7 @@ def index_pdf(pdf_path: str, subject: str) -> int:
 # ── Retriever tools ───────────────────────────────────────────────────────────
 
 @tool
-def physics_retriever(query: str) -> str:
+def physics(query: str) -> str:
     """
     Search the Physics textbook for relevant content.
     Use this tool for questions about:
@@ -76,7 +75,7 @@ def physics_retriever(query: str) -> str:
     - Modern Physics: atomic structure, radioactivity, nuclear reactions
     Do NOT use this for chemistry or biology questions.
     """
-    docs = physics_db.similarity_search(query, k=4)
+    docs = physics_db.similarity_search(query, k=3)
     formatted_chunks = []
     for d in docs:
         source = d.metadata.get("source", "Physics.pdf")
@@ -87,7 +86,7 @@ def physics_retriever(query: str) -> str:
 
 
 @tool
-def chemistry_retriever(query: str) -> str:
+def chemistry(query: str) -> str:
     """
     Search the Chemistry textbook for relevant content.
     Use this tool for questions about:
@@ -99,7 +98,7 @@ def chemistry_retriever(query: str) -> str:
     - States of Matter: solids, liquids, gases, phase changes, intermolecular forces
     Do NOT use this for physics or biology questions.
     """
-    docs = chemistry_db.similarity_search(query, k=4)
+    docs = chemistry_db.similarity_search(query, k=3)
     formatted_chunks = []
     for d in docs:
         source = d.metadata.get("source", "Chemistry.pdf")
@@ -110,7 +109,7 @@ def chemistry_retriever(query: str) -> str:
 
 
 @tool
-def biology_retriever(query: str) -> str:
+def biology(query: str) -> str:
     """
     Search the Biology textbook for relevant content.
     Use this tool for questions about:
@@ -122,7 +121,7 @@ def biology_retriever(query: str) -> str:
     - Ecology: food chains, ecosystems, biodiversity, population, environment
     Do NOT use this for physics or chemistry questions.
     """
-    docs = biology_db.similarity_search(query, k=4)
+    docs = biology_db.similarity_search(query, k=3)
     formatted_chunks = []
     for d in docs:
         source = d.metadata.get("source", "Biology.pdf")
@@ -132,33 +131,27 @@ def biology_retriever(query: str) -> str:
     return "\n\n".join(formatted_chunks)
 
 
-all_tools = [physics_retriever, chemistry_retriever, biology_retriever]
+all_tools = [physics, chemistry, biology]
 
 # ── Structured output schemas ─────────────────────────────────────────────────
- 
-class RetrievalResult(BaseModel):
-    """Structured summary of what the retrieval agent found."""
-    retrieved_content: str = Field(description="The raw retrieved passages, concatenated exactly as returned by the tool.")
- 
+
 class GradeResult(BaseModel):
     """Relevance grade for a set of retrieved passages against a question."""
     is_relevant: bool = Field(description="Whether the passages are relevant enough to answer the question.")
- 
+
 class FinalAnswer(BaseModel):
     """Final structured answer generated from retrieved passages."""
     answer: str = Field(description="The answer to the user's question, based only on the passages provided.")
     summary: str = Field(description="A one-sentence summary of the answer.")
     source: str = Field(description="The PDF filename the answer was drawn from, e.g. Physics.pdf.")
     page: str = Field(description="The page number(s) the answer was drawn from.")
- 
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
 agent = create_agent(
     model=llm,
     tools=all_tools,
-    system_prompt="You are a helpful education assistant. Use the retrieval tools to find relevant textbook content.",
-    response_format=ToolStrategy(RetrievalResult),
+    system_prompt="You are a retrieval assistant. You MUST use the provided tools to search for information. NEVER generate answers from your own knowledge.",
 )
 
 # ── RAG State ─────────────────────────────────────────────────────────────────
@@ -177,8 +170,8 @@ class RAGState(BaseModel):
 
 def retrieve_node(state: RAGState) -> dict:
     result = agent.invoke({"messages": [{"role": "user", "content": state.question}]})
-    structured = result["structured_response"]
-    return {"retrieved_text": structured.retrieved_content}
+    retrieved_text = result["messages"][-2].content  # ToolMessage — actual retrieved content
+    return {"retrieved_text": retrieved_text}
 
 
 def grade_node(state: RAGState) -> dict:
@@ -186,16 +179,19 @@ def grade_node(state: RAGState) -> dict:
         PromptTemplate.from_template(
             "Question: {question}\n\n"
             "Passages:\n{passages}\n\n"
-            "Are these passages relevant enough to answer the question?"
+            "Do these passages contain specific information that directly answers the question? "
+            "Reply YES only if the passages explicitly contain the answer. "
+            "If the passages are about a completely different topic, reply NO. "
+            "Reply only YES or NO."
         )
-        | llm.with_structured_output(GradeResult)
+        | llm
+        | StrOutputParser()
     )
-    
     answer = grade_chain.invoke({
         "question": state.question,
-        "passages": state.retrieved_text,
+        "passages": state.retrieved_text[:1500],
     })
-    return {"is_relevant": answer.is_relevant}
+    return {"is_relevant": "YES" in answer.upper()}
 
 
 def rephrase_node(state: RAGState) -> dict:
@@ -213,6 +209,15 @@ def rephrase_node(state: RAGState) -> dict:
 
 
 def generate_node(state: RAGState) -> dict:
+    # If not relevant after retrying, return not found
+    if not state.is_relevant:
+        return {
+            "answer": "No relevant content found in the uploaded PDFs for this question.",
+            "summary": "",
+            "source": "",
+            "page": "",
+        }
+
     generate_chain = (
         PromptTemplate.from_template(
             "Answer the question using only the passages below. If the passages include a "
