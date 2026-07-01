@@ -10,6 +10,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain.agents import create_agent
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
+from langchain.agents.structured_output import ToolStrategy
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
@@ -133,12 +134,31 @@ def biology_retriever(query: str) -> str:
 
 all_tools = [physics_retriever, chemistry_retriever, biology_retriever]
 
+# ── Structured output schemas ─────────────────────────────────────────────────
+ 
+class RetrievalResult(BaseModel):
+    """Structured summary of what the retrieval agent found."""
+    retrieved_content: str = Field(description="The raw retrieved passages, concatenated exactly as returned by the tool.")
+ 
+class GradeResult(BaseModel):
+    """Relevance grade for a set of retrieved passages against a question."""
+    is_relevant: bool = Field(description="Whether the passages are relevant enough to answer the question.")
+ 
+class FinalAnswer(BaseModel):
+    """Final structured answer generated from retrieved passages."""
+    answer: str = Field(description="The answer to the user's question, based only on the passages provided.")
+    summary: str = Field(description="A one-sentence summary of the answer.")
+    source: str = Field(description="The PDF filename the answer was drawn from, e.g. Physics.pdf.")
+    page: str = Field(description="The page number(s) the answer was drawn from.")
+ 
+
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
 agent = create_agent(
     model=llm,
     tools=all_tools,
     system_prompt="You are a helpful education assistant. Use the retrieval tools to find relevant textbook content.",
+    response_format=ToolStrategy(RetrievalResult),
 )
 
 # ── RAG State ─────────────────────────────────────────────────────────────────
