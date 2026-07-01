@@ -19,9 +19,12 @@ class AskRequest(BaseModel):
     question: str
 
 class AskResponse(BaseModel):
-    question:     str
-    final_answer: str
-    retry_count:  int
+    question:    str
+    answer:      str
+    summary:     str
+    source:      str
+    page:        str
+    retry_count: int
 
 class UploadResponse(BaseModel):
     subject:        str
@@ -85,6 +88,9 @@ def ask(request: AskRequest):
 
     return AskResponse(
         question=result["question"],
-        final_answer=result["final_answer"],
+        answer=result["answer"],
+        summary=result["summary"],
+        source=result["source"],
+        page=result["page"],
         retry_count=result["retry_count"],
     )
