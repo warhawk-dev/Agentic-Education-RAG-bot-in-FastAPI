@@ -177,8 +177,8 @@ class RAGState(BaseModel):
 
 def retrieve_node(state: RAGState) -> dict:
     result = agent.invoke({"messages": [{"role": "user", "content": state.question}]})
-    retrieved_text = result["messages"][-2].content   # ToolMessage is always second to last
-    return {"retrieved_text": retrieved_text}
+    structured = result["structured_response"]
+    return {"retrieved_text": structured.retrieved_content}
 
 
 def grade_node(state: RAGState) -> dict:
@@ -186,16 +186,16 @@ def grade_node(state: RAGState) -> dict:
         PromptTemplate.from_template(
             "Question: {question}\n\n"
             "Passages:\n{passages}\n\n"
-            "Are these passages relevant to answer the question? Reply YES or NO only."
+            "Are these passages relevant enough to answer the question?"
         )
-        | llm
-        | StrOutputParser()
+        | llm.with_structured_output(GradeResult)
     )
+    
     answer = grade_chain.invoke({
         "question": state.question,
-        "passages": state.retrieved_text[:1500],
+        "passages": state.retrieved_text,
     })
-    return {"is_relevant": "YES" in answer.upper()}
+    return {"is_relevant": answer.is_relevant}
 
 
 def rephrase_node(state: RAGState) -> dict:
@@ -215,23 +215,23 @@ def rephrase_node(state: RAGState) -> dict:
 def generate_node(state: RAGState) -> dict:
     generate_chain = (
         PromptTemplate.from_template(
-            "Answer the question using the passages below.\n\n"
+            "Answer the question using only the passages below. If the passages include a "
+            "[Source: ... | Page: ...] tag, use it to fill in the source and page fields.\n\n"
             "Question: {question}\n\n"
-            "Passages:\n{passages}\n\n"
-            "Use this format:\n"
-            "Answer\n-------\n<answer>\n\n"
-            "Summary\n-------\n<one sentence>\n\n"
-            "Source\n------\n<PDF name>\n\n"
-            "Page\n----\n<page number>"
+            "Passages:\n{passages}"
         )
-        | llm
-        | StrOutputParser()
+        | llm.with_structured_output(FinalAnswer)
     )
-    answer = generate_chain.invoke({
+    result = generate_chain.invoke({
         "question": state.question,
         "passages": state.retrieved_text,
     })
-    return {"final_answer": answer}
+    return {
+        "answer": result.answer,
+        "summary": result.summary,
+        "source": result.source,
+        "page": result.page,
+    }
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 
