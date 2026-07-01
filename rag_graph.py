@@ -164,11 +164,14 @@ agent = create_agent(
 # ── RAG State ─────────────────────────────────────────────────────────────────
 
 class RAGState(BaseModel):
-    question:       str  = Field(default="")
-    retrieved_text: str  = Field(default="")
-    is_relevant:    bool = Field(default=False)
-    final_answer:   str  = Field(default="")
-    retry_count:    int  = Field(default=0)
+    question:       str   = Field(default="")
+    retrieved_text: str   = Field(default="")
+    is_relevant:    bool  = Field(default=False)
+    answer:         str   = Field(default="")
+    summary:        str   = Field(default="")
+    source:         str   = Field(default="")
+    page:           str   = Field(default="")
+    retry_count:    int   = Field(default=0)
 
 # ── Graph nodes ───────────────────────────────────────────────────────────────
 
